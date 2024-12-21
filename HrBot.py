@@ -5,14 +5,14 @@ import pandas as pd
 
 # Настройка Google Sheets API
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("path/to/your/credentials.json", scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("hrbot-445217-f8c4763e4a93.json", scope)
 client = gspread.authorize(creds)
 
 # Открытие Google Таблицы
 sheet = client.open("HR Data").sheet1
 
 # Настройка бота
-API_TOKEN = '8178570976:AAE59MagRIAC1ZSQtxhnQ4ol1IAdFHrbg6E'  # Здесь ваш токен API
+API_TOKEN = '8178570976:AAE59MagRIAC1ZSQtxhnQ4ol1IAdFHrbg6E'  # Ваш API токен
 bot = telebot.TeleBot(API_TOKEN)
 
 user_data = {}
