@@ -1,7 +1,13 @@
+import os
 import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
+import re
+
+# Настройка прокси (если необходимо)
+# os.environ['HTTP_PROXY'] = 'http://your-proxy:port'
+# os.environ['HTTPS_PROXY'] = 'https://your-proxy:port'
 
 # Настройка Google Sheets API
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -9,64 +15,123 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("hrbot-445217-f8c4763e4
 client = gspread.authorize(creds)  # Авторизация клиента Google Sheets
 
 # Открытие Google Таблицы
-sheet = client.open("HR Data").sheet1  # Открытие таблицы "HR Data" и выбор первого листа
+try:
+    sheet = client.open("HR Data").sheet1  # Открытие таблицы "HR Data" и выбор первого листа
+except Exception as e:
+    print(f"Ошибка при подключении к Google Sheets: {e}")
 
 # Настройка бота
 API_TOKEN = '8178570976:AAE59MagRIAC1ZSQtxhnQ4ol1IAdFHrbg6E'  # Токен API вашего Telegram бота
-bot = telebot.TeleBot(API_TOKEN)  # Создание экземпляра бота с использованием API токена
+bot = telebot.TeleBot(API_TOKEN, parse_mode=None, threaded=False)  # Создание экземпляра бота с использованием API токена
 
-user_data = {}  # Словарь для хранения данных пользователя
+# Увеличение времени ожидания
+bot.timeout = 120  # Установите большее время ожидания для соединений
+bot.read_timeout = 120  # Установите большее время ожидания для чтения данных
 
-# Запросы данных у пользователя
+# Функция для извлечения данных из текста
+def extract_data_from_text(text):
+    data = {
+        'name': '---',
+        'age': '---',
+        'city': '---',
+        'citizenship': '---',
+        'phone': '---',
+        'employment_type': '---',
+        'start_date': '---',
+        'note': '---'
+    }
+
+    # Регулярные выражения для поиска данных
+    patterns = {
+        'name': r'([А-ЯЁа-яё]+\s[А-ЯЁа-яё]+\с[А-ЯЁа-яё]+)',
+        'age': r'(?:Возраст\s*)?(\d+\s?лет|\д+)',
+        'city': r'(г\.\с?[А-ЯЁа-яё]+|[А-ЯЁа-яё]+(-[А-ЯЁа-яё]+)?)',
+        'citizenship': r'Гражданство\s?(РФ|Россия|Российское|Белоруссия|.+)',
+        'phone': r'(\+?\д{1,3}[-\с]?\(?\д{3}\)?[-\с]?\д{3}[-\с]?\д{2}[-\с]?\д{2}|\д{10})',
+        'employment_type': r'(полный|частичный|подработка|на постоянной|.+)',
+        'start_date': r'(?:готов приступать к работе\s*)?(.+)'
+    }
+
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            data[key] = match.group(1).strip()
+
+    # Обработка примечаний
+    note_text = text
+    used_data = set(data.values())
+    for key, value in data.items():
+        if value != '---' and value in used_data:
+            note_text = note_text.replace(value, '').strip()
+    data['note'] = note_text if note_text and note_text != text else '---'
+
+    return data
+
+# Запрос данных у пользователя
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "Введите ФИО:")  # Отправка сообщения с запросом ФИО
-    bot.register_next_step_handler(message, get_name)  # Регистрация следующего шага для получения ФИО
+    bot.send_message(
+        message.chat.id,
+        "Пожалуйста, введите ваши данные в любом порядке. Пример:\n"
+        "Кирюшин Виктор Максимович\n"
+        "Санкт-Петербург\n"
+        "Девяткино Российское\n"
+        "Возраст 29\n"
+        "Рассмотрю любые варианты\n"
+        "+7964991-18-89"
+    )
+    bot.register_next_step_handler(message, process_user_data)  # Регистрация следующего шага для обработки данных
 
-def get_name(message):
-    user_data['name'] = message.text  # Сохранение введенного ФИО в словарь
-    bot.send_message(message.chat.id, "Введите номер телефона:")  # Запрос номера телефона
-    bot.register_next_step_handler(message, get_phone)  # Регистрация следующего шага для получения номера телефона
+def process_user_data(message):
+    text = message.text
+    data = extract_data_from_text(text)  # Извлечение данных из текста
 
-def get_phone(message):
-    user_data['phone'] = message.text  # Сохранение введенного номера телефона в словарь
-    bot.send_message(message.chat.id, "Введите город:")  # Запрос города
-    bot.register_next_step_handler(message, get_city)  # Регистрация следующего шага для получения города
+    if any(data[key] != '---' for key in ['name', 'age', 'city', 'citizenship', 'phone', 'employment_type', 'start_date']):
+        save_to_sheet(data)  # Вызов функции для сохранения данных в таблице
+        bot.send_message(message.chat.id, "Спасибо! Ваши данные сохранены.")
+    else:
+        bot.send_message(message.chat.id, "Ошибка в данных. Пожалуйста, введите данные в правильном формате.")
 
-def get_city(message):
-    user_data['city'] = message.text  # Сохранение введенного города в словарь
-    bot.send_message(message.chat.id, "Введите должность:")  # Запрос должности
-    bot.register_next_step_handler(message, get_position)  # Регистрация следующего шага для получения должности
+def save_to_sheet(data):
+    row = [
+        f"ФИО: {data['name']}",
+        f"Возраст: {data['age']}",
+        f"Город: {data['city']}",
+        f"Гражданство: {data['citizenship']}",
+        f"Телефон: {data['phone']}",
+        f"Тип занятости: {data['employment_type']}",
+        f"Когда готов приступить к работе: {data['start_date']}",
+        f"Примечание: {data['note']}"
+    ]  # Создание строки данных из словаря
+    try:
+        sheet.append_row(row)  # Добавление строки данных в таблицу
+    except Exception as e:
+        print(f"Ошибка при записи данных в Google Sheets: {e}")
 
-def get_position(message):
-    user_data['position'] = message.text  # Сохранение введенной должности в словарь
-    save_to_sheet()  # Вызов функции для сохранения данных в таблице
-    bot.send_message(message.chat.id, "Спасибо! Ваши данные сохранены.")  # Подтверждение сохранения данных
+try:
+    bot.polling(timeout=120, long_polling_timeout=120)  # Запуск бесконечного цикла для обработки сообщений бота с увеличенным временем ожидания
+except Exception as e:
+    print(f"Ошибка при подключении к Telegram API: {e}")
 
-def save_to_sheet():
-    row = [user_data['name'], user_data['phone'], user_data['city'], user_data['position']]  # Создание строки данных из словаря
-    sheet.append_row(row)  # Добавление строки данных в таблицу
+import pandas as pd
 
-def filter_data(criteria, value):
-    data = sheet.get_all_records()  # Получение всех записей из таблицы
-    df = pd.DataFrame(data)  # Преобразование данных в DataFrame
-    filtered_df = df[df[criteria] == value]  # Фильтрация данных по заданному критерию и значению
-    print(filtered_df)  # Печать отфильтрованных данных
+# Функция для разделения данных на отдельные столбцы
+def split_data_into_columns():
+    try:
+        # Получение всех данных из таблицы
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
 
-# Обработчик команды фильтрации
-@bot.message_handler(commands=['filter'])
-def filter_command(message):
-    bot.send_message(message.chat.id, "Введите критерий фильтрации (например, 'city'):")  # Запрос критерия фильтрации
-    bot.register_next_step_handler(message, get_filter_criteria)  # Регистрация следующего шага для получения критерия
+        # Разделение данных по колонкам
+        df_expanded = df['Общие данные'].str.extract(r'ФИО: (?P<name>.+)\nВозраст: (?P<age>.+)\nГород: (?P<city>.+)\nГражданство: (?P<citizenship>.+)\nТелефон: (?P<phone>.+)\nТип занятости: (?P<employment_type>.+)\nКогда готов приступить к работе: (?P<start_date>.+)\nПримечание: (?P<note>.+)')
 
-def get_filter_criteria(message):
-    criteria = message.text  # Сохранение критерия фильтрации
-    bot.send_message(message.chat.id, f"Введите значение для фильтрации по {criteria}:")  # Запрос значения для фильтрации
-    bot.register_next_step_handler(message, lambda msg: apply_filter(msg, criteria))  # Регистрация следующего шага для применения фильтрации
+        # Обновление таблицы
+        df_expanded = df_expanded.fillna('---')
+        sheet.clear()
+        sheet.update([df_expanded.columns.values.tolist()] + df_expanded.values.tolist())
+        print("Данные успешно разделены на столбцы и обновлены в таблице.")
+    except Exception as e:
+        print(f"Ошибка при разделении данных на столбцы: {e}")
 
-def apply_filter(message, criteria):
-    value = message.text  # Сохранение значения для фильтрации
-    filter_data(criteria, value)  # Вызов функции для фильтрации данных
-    bot.send_message(message.chat.id, "Фильтрация завершена. Проверьте вывод в консоли.")  # Подтверждение завершения фильтрации
-
-bot.polling()  # Запуск бесконечного цикла для обработки сообщений бота
+# Вызов функции для разделения данных на столбцы
+split_data_into_columns()
