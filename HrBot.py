@@ -2,7 +2,6 @@ import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-import re
 
 # Настройка Google Sheets API
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -16,67 +15,58 @@ sheet = client.open("HR Data").sheet1  # Открытие таблицы "HR Dat
 API_TOKEN = '8178570976:AAE59MagRIAC1ZSQtxhnQ4ol1IAdFHrbg6E'  # Токен API вашего Telegram бота
 bot = telebot.TeleBot(API_TOKEN)  # Создание экземпляра бота с использованием API токена
 
-# Функция для извлечения данных из текста
-def extract_data_from_text(text):
-    data = {
-        'name': None,
-        'phone': None,
-        'city': None,
-        'position': None,
-        'note': None
-    }
+user_data = {}  # Словарь для хранения данных пользователя
 
-    # Регулярные выражения для поиска данных
-    patterns = {
-        'name': r'(?:ФИО\s*)?([А-ЯЁа-яё]+\s[А-ЯЁа-яё]+\s[А-ЯЁа-яё]+)',
-        'phone': r'(?:Телефон\s*)?(\+?\d{1,3}[-\s]?\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}|\d{10})',
-        'city': r'(?:город\s*)?(Санкт-Петербург|Москва|Мурино|Всеволожск|[А-ЯЁа-яё]+(-[А-ЯЁа-яё]+)?)',
-        'position': r'(?:должность\s*)?(Программист|Менеджер|Подработка|На постоянной|Рассмотрю любые варианты|.+)',
-        'note': r'(?:примечание\s*)?([\s\S]*)'
-    }
-
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            data[key] = match.group(1).strip()
-
-    return data
-
-# Запрос данных у пользователя
+# Запросы данных у пользователя
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(
-        message.chat.id,
-        "Пожалуйста, введите ваши данные в любом порядке. Пример:\n"
-        "Кирюшин Виктор Максимович\n"
-        "Санкт-Петербург\n"
-        "Девяткино\n"
-        "Российское\n"
-        "29\n"
-        "Рассмотрю любые варианты\n"
-        "+7964991-18-89"
-    )
-    bot.register_next_step_handler(message, process_user_data)  # Регистрация следующего шага для обработки данных
+    bot.send_message(message.chat.id, "Введите ФИО:")  # Отправка сообщения с запросом ФИО
+    bot.register_next_step_handler(message, get_name)  # Регистрация следующего шага для получения ФИО
 
-def process_user_data(message):
-    text = message.text
-    data = extract_data_from_text(text)  # Извлечение данных из текста
+def get_name(message):
+    user_data['name'] = message.text  # Сохранение введенного ФИО в словарь
+    bot.send_message(message.chat.id, "Введите номер телефона:")  # Запрос номера телефона
+    bot.register_next_step_handler(message, get_phone)  # Регистрация следующего шага для получения номера телефона
 
-    if data['name'] and data['phone'] and data['city'] and data['position']:
-        save_to_sheet(data)  # Вызов функции для сохранения данных в таблице
-        bot.send_message(message.chat.id, "Спасибо! Ваши данные сохранены.")
-    else:
-        bot.send_message(message.chat.id, "Ошибка в данных. Пожалуйста, введите данные в правильном формате.")
+def get_phone(message):
+    user_data['phone'] = message.text  # Сохранение введенного номера телефона в словарь
+    bot.send_message(message.chat.id, "Введите город:")  # Запрос города
+    bot.register_next_step_handler(message, get_city)  # Регистрация следующего шага для получения города
 
-def save_to_sheet(data):
-    note = data['note'] or ''  # Обработка примечания
-    row = [
-        data['name'],
-        data['phone'],
-        data['city'],
-        data['position'],
-        note.replace(data['name'], '').replace(data['phone'], '').replace(data['city'], '').replace(data['position'], '').strip()
-    ]  # Создание строки данных из словаря
+def get_city(message):
+    user_data['city'] = message.text  # Сохранение введенного города в словарь
+    bot.send_message(message.chat.id, "Введите должность:")  # Запрос должности
+    bot.register_next_step_handler(message, get_position)  # Регистрация следующего шага для получения должности
+
+def get_position(message):
+    user_data['position'] = message.text  # Сохранение введенной должности в словарь
+    save_to_sheet()  # Вызов функции для сохранения данных в таблице
+    bot.send_message(message.chat.id, "Спасибо! Ваши данные сохранены.")  # Подтверждение сохранения данных
+
+def save_to_sheet():
+    row = [user_data['name'], user_data['phone'], user_data['city'], user_data['position']]  # Создание строки данных из словаря
     sheet.append_row(row)  # Добавление строки данных в таблицу
+
+def filter_data(criteria, value):
+    data = sheet.get_all_records()  # Получение всех записей из таблицы
+    df = pd.DataFrame(data)  # Преобразование данных в DataFrame
+    filtered_df = df[df[criteria] == value]  # Фильтрация данных по заданному критерию и значению
+    print(filtered_df)  # Печать отфильтрованных данных
+
+# Обработчик команды фильтрации
+@bot.message_handler(commands=['filter'])
+def filter_command(message):
+    bot.send_message(message.chat.id, "Введите критерий фильтрации (например, 'city'):")  # Запрос критерия фильтрации
+    bot.register_next_step_handler(message, get_filter_criteria)  # Регистрация следующего шага для получения критерия
+
+def get_filter_criteria(message):
+    criteria = message.text  # Сохранение критерия фильтрации
+    bot.send_message(message.chat.id, f"Введите значение для фильтрации по {criteria}:")  # Запрос значения для фильтрации
+    bot.register_next_step_handler(message, lambda msg: apply_filter(msg, criteria))  # Регистрация следующего шага для применения фильтрации
+
+def apply_filter(message, criteria):
+    value = message.text  # Сохранение значения для фильтрации
+    filter_data(criteria, value)  # Вызов функции для фильтрации данных
+    bot.send_message(message.chat.id, "Фильтрация завершена. Проверьте вывод в консоли.")  # Подтверждение завершения фильтрации
 
 bot.polling()  # Запуск бесконечного цикла для обработки сообщений бота
