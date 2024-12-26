@@ -43,13 +43,13 @@ def extract_data_from_text(text):
 
     # Регулярные выражения для поиска данных
     patterns = {
-        'name': r'([А-ЯЁа-яё]+\s[А-ЯЁа-яё]+\с[А-ЯЁа-яё]+)',
-        'age': r'(?:Возраст\s*)?(\d+\s?лет|\д+)',
-        'city': r'(г\.\с?[А-ЯЁа-яё]+|[А-ЯЁа-яё]+(-[А-ЯЁа-яё]+)?)',
-        'citizenship': r'Гражданство\s?(РФ|Россия|Российское|Белоруссия|.+)',
-        'phone': r'(\+?\д{1,3}[-\с]?\(?\д{3}\)?[-\с]?\д{3}[-\с]?\д{2}[-\с]?\д{2}|\д{10})',
-        'employment_type': r'(полный|частичный|подработка|на постоянной|.+)',
-        'start_date': r'(?:готов приступать к работе\s*)?(.+)'
+        'name': r'([А-ЯЁа-яё]+ [А-ЯЁа-яё]+ [А-ЯЁа-яё]+)',
+        'age': r'(?:Возраст )?(\d+)',
+        'city': r'(г\. [А-ЯЁа-яё]+|[А-ЯЁа-яё]+(-[А-ЯЁа-яё]+)?)',
+        'citizenship': r'Гражданство ([А-ЯЁа-яё]+)',
+        'phone': r'(\+?\д{1,3}?[\- ]?\(?\д{3}?\)?[\- ]?\д{3}[\- ]?\д{2}[\- ]?\д{2})',
+        'employment_type': r'(полный|частичный|подработка|на постоянной основе)',
+        'start_date': r'(?:готов приступать к работе )?(.+)'
     }
 
     for key, pattern in patterns.items():
@@ -86,30 +86,37 @@ def process_user_data(message):
     text = message.text
     data = extract_data_from_text(text)  # Извлечение данных из текста
 
-    if any(data[key] != '---' for key in ['name', 'age', 'city', 'citizenship', 'phone', 'employment_type', 'start_date']):
+    if any(data[key] != '---' for key in data.keys()):
         save_to_sheet(data)  # Вызов функции для сохранения данных в таблице
         bot.send_message(message.chat.id, "Спасибо! Ваши данные сохранены.")
     else:
         bot.send_message(message.chat.id, "Ошибка в данных. Пожалуйста, введите данные в правильном формате.")
 
+# Функция для сохранения данных в таблице
 def save_to_sheet(data):
     row = [
-        f"ФИО: {data['name']}",
-        f"Возраст: {data['age']}",
-        f"Город: {data['city']}",
-        f"Гражданство: {data['citizenship']}",
-        f"Телефон: {data['phone']}",
-        f"Тип занятости: {data['employment_type']}",
-        f"Когда готов приступить к работе: {data['start_date']}",
-        f"Примечание: {data['note']}"
+        data['name'],
+        data['age'],
+        data['city'],
+        data['citizenship'],
+        data['phone'],
+        data['employment_type'],
+        data['start_date'],
+        data['note']
     ]  # Создание строки данных из словаря
     try:
         sheet.append_row(row)  # Добавление строки данных в таблицу
     except Exception as e:
         print(f"Ошибка при записи данных в Google Sheets: {e}")
 
+# Обработка всех сообщений от пользователей
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    process_user_data(message)  # Обработка каждого сообщения
+
+# Запуск бесконечного цикла для обработки сообщений бота с увеличенным временем ожидания
 try:
-    bot.polling(timeout=120, long_polling_timeout=120)  # Запуск бесконечного цикла для обработки сообщений бота с увеличенным временем ожидания
+    bot.polling(timeout=120, long_polling_timeout=120)
 except Exception as e:
     print(f"Ошибка при подключении к Telegram API: {e}")
 
@@ -122,11 +129,8 @@ def split_data_into_columns():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
 
-        # Разделение данных по колонкам
-        df_expanded = df['Общие данные'].str.extract(r'ФИО: (?P<name>.+)\nВозраст: (?P<age>.+)\nГород: (?P<city>.+)\nГражданство: (?P<citizenship>.+)\nТелефон: (?P<phone>.+)\nТип занятости: (?P<employment_type>.+)\nКогда готов приступить к работе: (?P<start_date>.+)\nПримечание: (?P<note>.+)')
-
         # Обновление таблицы
-        df_expanded = df_expanded.fillna('---')
+        df_expanded = df.fillna('---')
         sheet.clear()
         sheet.update([df_expanded.columns.values.tolist()] + df_expanded.values.tolist())
         print("Данные успешно разделены на столбцы и обновлены в таблице.")
