@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import re
+from geopy.geocoders import Nominatim
 
 # Настройка прокси (если необходимо)
 # os.environ['HTTP_PROXY'] = 'http://your-proxy:port'
@@ -28,6 +29,9 @@ bot = telebot.TeleBot(API_TOKEN, parse_mode=None, threaded=False)  # Созда�
 bot.timeout = 120  # Установите большее время ожидания для соединений
 bot.read_timeout = 120  # Установите большее время ожидания для чтения данных
 
+# Инициализация геокодера
+geolocator = Nominatim(user_agent="hrbot")
+
 # Функция для извлечения данных из текста
 def extract_data_from_text(text):
     data = {
@@ -45,17 +49,23 @@ def extract_data_from_text(text):
     patterns = {
         'name': r'([А-ЯЁа-яё]+ [А-ЯЁа-яё]+ [А-ЯЁа-яё]+)',
         'age': r'(?:Возраст )?(\d+)',
-        'city': r'(г\. [А-ЯЁа-яё]+|[А-ЯЁа-яё]+(-[А-ЯЁа-яё]+)?)',
-        'citizenship': r'Гражданство ([А-ЯЁа-яё]+)',
         'phone': r'(\+?\д{1,3}?[\- ]?\(?\д{3}?\)?[\- ]?\д{3}[\- ]?\д{2}[\- ]?\д{2})',
         'employment_type': r'(полный|частичный|подработка|на постоянной основе)',
-        'start_date': r'(?:готов приступать к работе )?(.+)'
+        'start_date': r'(?:готов приступать к работе )?(.+)',
+        'citizenship': r'Гражданство\s*([А-ЯЁа-яё]+)'
     }
 
     for key, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             data[key] = match.group(1).strip()
+
+    # Использование geopy для поиска города
+    city_match = re.search(r'([А-ЯЁа-яё\s\-]+)', text, re.IGNORECASE)
+    if city_match:
+        location = geolocator.geocode(city_match.group(1).strip())
+        if location:
+            data['city'] = location.address.split(",")[0]
 
     # Обработка примечаний
     note_text = text
